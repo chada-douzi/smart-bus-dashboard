@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Smart Bus Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- SOCKET.IO -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <!-- CHART.JS -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- LEAFLET MAP -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', 'Segoe UI', sans-serif;
+      background: #060d1a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: rgba(15, 23, 42, 0.95);
+      backdrop-filter: blur(12px);
+      padding: 0 28px;
+      height: 60px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1e3a5f;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 700;
+      color: #38bdf8;
+      letter-spacing: 0.3px;
+    }
+
+    .logout {
+      background: transparent;
+      border: 1px solid #ef444466;
+      padding: 6px 16px;
+      color: #ef4444;
+      cursor: pointer;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      transition: all 0.2s;
+    }
+    .logout:hover {
+      background: #ef4444;
+      border-color: #ef4444;
+      color: white;
+    }
+
+    /* ── ALERT ── */
+    .alert {
+      background: linear-gradient(90deg, #450a0a, #7f1d1d);
+      border-left: 3px solid #ef4444;
+      padding: 11px 20px;
+      margin: 16px 24px 0;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #fca5a5;
+      animation: slideIn 0.25s ease;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── STATS GRID ── */
+    .container {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      padding: 20px 24px 14px;
+    }
+
+    .card {
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 14px;
+      padding: 20px 16px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      transition: border-color 0.25s, transform 0.25s, box-shadow 0.25s;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #38bdf8, #0ea5e9);
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+    .card:hover {
+      border-color: #38bdf840;
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(56,189,248,0.08);
+    }
+    .card:hover::before { opacity: 1; }
+
+    .card span {
+      display: block;
+      font-size: 26px;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-top: 8px;
+      letter-spacing: -0.5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── MAP ── */
+    #map {
+      height: 340px;
+      margin: 0 24px 14px;
+      border-radius: 14px;
+      border: 1px solid #1e3a5f;
+      overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    /* ── CHARTS ── */
+    canvas {
+      background: #0f1f35;
+      border-radius: 14px;
+      border: 1px solid #1e3a5f;
+      margin: 0 24px 14px;
+      max-width: calc(100% - 48px);
+      display: block;
+      padding: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .container { grid-template-columns: repeat(2, 1fr); }
+      #map, canvas { margin: 0 12px 12px; max-width: calc(100% - 24px); }
+    }
+
+    /* ── MODE SELECTOR ── */
+    .mode-select {
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 7px;
+      color: #e2e8f0;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-family: inherit;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      margin-right: 10px;
+    }
+    .mode-select:focus { border-color: #38bdf8; }
+
+    body.mode-blind .card span { font-size: 38px; }
+    body.mode-blind h1 { font-size: 24px; }
+    body.mode-blind .prediction-value { font-size: 30px; }
+    body.mode-blind * { letter-spacing: 0.3px; }
+
+    .access-bar {
+      background: #0f2d1f;
+      border-left: 3px solid #4ade80;
+      color: #4ade80;
+      padding: 10px 24px;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+    }
+
+    /* ── MODE BLIND : contraste élevé + grande police ── */
+    body.mode-blind { background: #000 !important; }
+    body.mode-blind .card { background: #111; border-color: #fff; }
+    body.mode-blind .card span { font-size: 40px; color: #fff; }
+    body.mode-blind h1 { font-size: 26px; color: #fff; }
+    body.mode-blind .prediction-value { font-size: 32px; }
+    body.mode-blind header { background: #111; border-color: #fff; }
+    body.mode-blind .prediction-card { background: #111; border-color: #fff; }
+
+    body.mode-tourist .card { border-color: #f59e0b66; }
+    body.mode-tourist .card::before { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    body.mode-disabled .card { border-color: #4ade8066; }
+    body.mode-disabled .card::before { background: linear-gradient(90deg, #4ade80, #22c55e); }
+
+    .access-bar {
+      padding: 12px 24px;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .access-bar.show { display: flex; }
+    .access-bar.green { background: #0f2d1f; border-left: 3px solid #4ade80; color: #4ade80; }
+    .access-bar.red   { background: #2d0f0f; border-left: 3px solid #f87171; color: #f87171; }
+
+    /* ── FLOATING BUTTON ── */
+    .fab-access {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      background: #38bdf8;
+      color: #060d1a;
+      font-size: 22px;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(56,189,248,0.4);
+      z-index: 999;
+      transition: transform 0.2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .fab-access:hover { transform: scale(1.1); }
+
+    /* ── SETTINGS PANEL ── */
+    .settings-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 1100;
+      display: none;
+      align-items: center; justify-content: center;
+    }
+    .settings-overlay.open { display: flex; }
+    .settings-panel {
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 16px;
+      padding: 28px;
+      width: 420px; max-width: 95vw;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    }
+    .settings-panel h2 { font-size: 16px; font-weight: 700; color: #f1f5f9; margin-bottom: 20px; }
+    .settings-row {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid #1e3a5f;
+    }
+    .settings-row:last-of-type { border-bottom: none; }
+    .settings-label { font-size: 13px; color: #94a3b8; }
+    .settings-label span { display: block; font-size: 11px; color: #475569; margin-top: 2px; }
+    .toggle { position: relative; width: 44px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0;
+      background: #334155; border-radius: 24px; cursor: pointer; transition: background 0.2s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      width: 18px; height: 18px; left: 3px; top: 3px;
+      background: white; border-radius: 50%; transition: transform 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: #38bdf8; }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(20px); }
+    .lang-select {
+      background: #0a1628; border: 1px solid #1e3a5f;
+      border-radius: 6px; color: #e2e8f0;
+      padding: 5px 8px; font-size: 12px; font-family: inherit; outline: none;
+    }
+    .btn-close {
+      width: 100%; margin-top: 20px; padding: 10px;
+      background: #38bdf8; color: #060d1a;
+      border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit;
+    }
+
+    /* ── GUIDE TOURISTE ── */
+    .tourist-guide {
+      margin: 0 24px 14px;
+      background: #1a1200;
+      border: 1px solid #f59e0b44;
+      border-radius: 14px;
+      padding: 16px 20px;
+      display: none;
+    }
+    .tourist-guide.show { display: block; }
+    .tourist-guide h3 { color: #fbbf24; font-size: 13px; margin-bottom: 10px; }
+    .tourist-guide ul { list-style: none; }
+    .tourist-guide ul li { color: #94a3b8; font-size: 12px; padding: 4px 0; }
+    .tourist-guide ul li::before { content: "→ "; color: #f59e0b; }
+
+    .prediction-card {
+      margin: 0 24px 14px;
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 14px;
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .prediction-card .prediction-icon { font-size: 32px; }
+
+    .prediction-info { flex: 1; }
+
+    .prediction-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      margin-bottom: 4px;
+    }
+
+    .prediction-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f1f5f9;
+    }
+
+    .prediction-sub {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+
+    .prediction-badge {
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .prediction-badge.green  { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+    .prediction-badge.orange { background: #431407; color: #fb923c; border: 1px solid #9a3412; }
+    .prediction-badge.red    { background: #450a0a; color: #f87171; border: 1px solid #991b1b; }
+    .prediction-badge.grey   { background: #1e293b; color: #64748b; border: 1px solid #334155; }
+    .section {
+      margin: 0 24px 24px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .filters input, .filters select {
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 7px;
+      color: #e2e8f0;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .filters input:focus, .filters select:focus { border-color: #38bdf8; }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 7px;
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: #38bdf8; color: #060d1a; }
+    .btn-export  { background: #10b981; color: white; }
+
+    /* ── FILTRE ACCESSIBLE ── */
+    .filter-check {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #4ade80;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 6px 10px;
+      background: #0f2d1f;
+      border: 1px solid #166534;
+      border-radius: 7px;
+      transition: background 0.2s;
+    }
+    .filter-check:hover { background: #14532d; }
+    .filter-check input { accent-color: #4ade80; width: 14px; height: 14px; cursor: pointer; }
+
+    /* ── CHART FUTUR ── */
+    .future-chart-wrap {
+      margin: 0 24px 14px;
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .future-chart-wrap .chart-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 10px;
+    }
+    .future-chart-wrap canvas {
+      background: transparent;
+      border: none;
+      margin: 0; padding: 0;
+      max-width: 100%;
+    }
+
+    /* ── BADGE ACCESSIBLE ── */
+    .marker-accessible { border-color: #4ade80 !important; }
+
+    .history-chart-wrap {
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+
+    .history-chart-wrap canvas {
+      background: transparent;
+      border: none;
+      margin: 0;
+      padding: 0;
+      max-width: 100%;
+    }
+
+    .table-wrap {
+      background: #0f1f35;
+      border: 1px solid #1e3a5f;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead tr {
+      background: #0a1628;
+      border-bottom: 1px solid #1e3a5f;
+    }
+
+    th {
+      padding: 11px 14px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    td {
+      padding: 10px 14px;
+      color: #cbd5e1;
+      border-bottom: 1px solid #1e3a5f22;
+    }
+
+    tbody tr:hover { background: #1e3a5f22; }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: #1e3a5f;
+      color: #38bdf8;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 32px;
+      color: #334155;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+
+<!-- HEADER -->
+<header>
+  <h1 id="mainTitle">🚌 Smart Bus Dashboard</h1>
+  <div style="display:flex;align-items:center;gap:8px">
+    <select class="mode-select" id="userMode" onchange="changeMode()">
+      <option value="normal">🖥️ Normal</option>
+      <option value="blind">👨‍🦯 Aveugle</option>
+      <option value="disabled">♿ Handicap</option>
+      <option value="tourist">🌍 Touriste</option>
+    </select>
+    <select class="mode-select" id="activeBus" onchange="setActiveBus()" title="Suivre un bus">
+      <option value="">🚌 Tous les bus</option>
+      <option value="B12">🚌 B12</option>
+      <option value="B13">🚌 B13</option>
+      <option value="B14">🚌 B14</option>
+    </select>
+    <a href="/logout"><button class="logout">Logout</button></a>
+  </div>
+</header>
+
+<!-- ACCESSIBILITY BAR -->
+<div class="access-bar green" id="accessBar">
+  ♿ Bus accessible — Rampe disponible &nbsp;|&nbsp; 🦽 Places fauteuil : <span id="wheelchairSpots">2</span> disponibles
+</div>
+
+<!-- TOURIST GUIDE -->
+<div class="tourist-guide" id="touristGuide">
+  <h3>🌍 Tourist Guide — How to use this bus</h3>
+  <ul>
+    <li>Tap your card or pay cash when boarding</li>
+    <li>Seats are available on a first-come basis</li>
+    <li>Bus B12 runs every 10 minutes</li>
+    <li>Next stop announced automatically</li>
+    <li>Emergency button located near the driver</li>
+  </ul>
+</div>
+
+<!-- FLOATING ACCESSIBILITY BUTTON -->
+<button class="fab-access" onclick="openSettings()" title="Paramètres d'accessibilité">⚙️</button>
+
+<!-- SETTINGS PANEL -->
+<div class="settings-overlay" id="settingsOverlay" onclick="closeSettingsOutside(event)">
+  <div class="settings-panel">
+    <h2>⚙️ Paramètres d'accessibilité</h2>
+
+    <div class="settings-row">
+      <div class="settings-label">
+        Mode utilisateur
+        <span>Adapte l'interface à vos besoins</span>
+      </div>
+      <select class="lang-select" id="userModePanel" onchange="changeModeFromPanel()">
+        <option value="normal">🖥️ Normal</option>
+        <option value="blind">👨‍🦯 Aveugle</option>
+        <option value="disabled">♿ Handicap</option>
+        <option value="tourist">🌍 Touriste</option>
+      </select>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-label">
+        Langue / Language
+        <span>Langue de la synthèse vocale</span>
+      </div>
+      <select class="lang-select" id="langSelect" onchange="changeLang()">
+        <option value="fr-FR">🇫🇷 Français</option>
+        <option value="en-US">🇺🇸 English</option>
+        <option value="ar-SA">🇸🇦 العربية</option>
+        <option value="es-ES">🇪🇸 Español</option>
+      </select>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-label">
+        Lecture vocale automatique
+        <span>Lire les données à chaque mise à jour</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggleVoice" onchange="saveSettings()">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-label">
+        Alertes vocales
+        <span>Annoncer les alertes (bus plein, air...)</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggleAlertVoice" checked onchange="saveSettings()">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-label">
+        Contraste élevé
+        <span>Fond noir, texte blanc, grande police</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="toggleContrast" onchange="applyContrast()">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <button class="btn-close" onclick="closeSettings()">Fermer</button>
+  </div>
+</div>
+
+<div id="alert" class="alert" style="display:none"></div>
+
+<!-- STATS -->
+<div class="container">
+  <div class="card">👥 <span id="passengers">0</span></div>
+  <div class="card">🌡️ <span id="temp">0</span></div>
+  <div class="card">💧 <span id="hum">0</span></div>
+  <div class="card">🌫️ <span id="air">0</span></div>
+</div>
+
+<!-- MAP -->
+<div id="map"></div>
+
+<!-- ETA CARD -->
+<div class="prediction-card" style="margin-top:0">
+  <div class="prediction-icon">🚏</div>
+  <div class="prediction-info">
+    <div class="prediction-title">Prochaine station</div>
+    <div class="prediction-value" id="etaInfo" style="font-size:16px">En attente...</div>
+    <div class="prediction-sub">Calculé en temps réel selon la position du bus</div>
+  </div>
+</div>
+
+<!-- GRAPHS -->
+<canvas id="chartTemp"></canvas>
+<canvas id="chartPassengers"></canvas>
+
+<!-- TRAFFIC PREDICTION -->
+<div class="prediction-card">
+  <div class="prediction-icon">📊</div>
+  <div class="prediction-info">
+    <div class="prediction-title">Prédiction — dans 5 minutes</div>
+    <div class="prediction-value">~<span id="aiPassengers">--</span> passagers</div>
+    <div class="prediction-sub" id="aiSub">En attente de données...</div>
+    <div id="aiRecommendation" style="font-size:12px;color:#f59e0b;margin-top:4px;font-weight:600;"></div>
+  </div>
+  <div class="prediction-badge grey" id="aiBadge">--</div>
+</div>
+
+<!-- GRAPHIQUE FUTUR -->
+<div class="future-chart-wrap">
+  <div class="chart-label">📈 Prévision trafic — prochaines minutes</div>
+  <canvas id="chartFuture"></canvas>
+</div>
+
+<!-- HISTORY SECTION -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-title">📋 Historique</span>
+    <div class="filters">
+      <select id="filterBus">
+        <option value="">Tous les bus</option>
+        <option value="B12">B12</option>
+        <option value="B13">B13</option>
+        <option value="B14">B14</option>
+      </select>
+      <input type="datetime-local" id="filterFrom" />
+      <input type="datetime-local" id="filterTo" />
+      <button class="btn btn-primary" onclick="loadHistory()">Filtrer</button>
+      <button class="btn btn-export" onclick="exportCSV()">⬇ Export CSV</button>
+      <label class="filter-check">
+        <input type="checkbox" id="filterAccessible" onchange="loadHistory()">
+        ♿ Bus accessibles uniquement
+      </label>
+    </div>
+  </div>
+
+  <!-- CHART HISTORIQUE -->
+  <div class="history-chart-wrap">
+    <canvas id="chartHistory"></canvas>
+  </div>
+
+  <!-- TABLE -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Bus</th>
+          <th>Passagers</th>
+          <th>Temp (°C)</th>
+          <th>Humidité (%)</th>
+          <th>Air</th>
+          <th>♿</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody">
+        <tr><td colspan="6" class="empty-state">Cliquez sur Filtrer pour charger l'historique</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const socket = io();
+
+// ===== MAP =====
+const map = L.map('map').setView([36.8, 10.1], 12);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: ''
+}).addTo(map);
+
+// ===== STATIONS =====
+const STATIONS = [
+  { name: "Station Centre",   lat: 36.810, lng: 10.110 },
+  { name: "Station Nord",     lat: 36.820, lng: 10.115 },
+  { name: "Station Sud",      lat: 36.795, lng: 10.105 },
+];
+
+const stationIcon = L.divIcon({
+  className: "",
+  html: `<div style="background:#f59e0b;width:12px;height:12px;border-radius:3px;border:2px solid white;box-shadow:0 0 6px #f59e0b"></div>`,
+  iconSize: [12, 12], iconAnchor: [6, 6]
+});
+
+STATIONS.forEach(s => {
+  L.marker([s.lat, s.lng], { icon: stationIcon })
+    .addTo(map)
+    .bindPopup(`<b>🚏 ${s.name}</b>`);
+});
+
+// ===== MARKERS MULTI BUS =====
+let markers  = {};
+let busPaths = {};
+let activeBus = "";
+
+// Couleurs par bus
+const BUS_COLORS = { B12: "#38bdf8", B13: "#a78bfa", B14: "#4ade80" };
+
+function setActiveBus() {
+  activeBus = document.getElementById("activeBus").value;
+}
+
+function getBusIcon(bus_id, passengers) {
+  const color = BUS_COLORS[bus_id] || "#38bdf8";
+  const accessible = passengers < 20;
+  const border = accessible ? "#4ade80" : "#ef4444";
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid ${border};box-shadow:0 0 6px ${color}"></div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+  });
+}
+
+// ===== ETA =====
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+            Math.sin(dLon/2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getNearestStation(lat, lng) {
+  return STATIONS.reduce((nearest, s) => {
+    const d = getDistance(lat, lng, s.lat, s.lng);
+    return d < nearest.dist ? { ...s, dist: d } : nearest;
+  }, { dist: Infinity });
+}
+
+function getETA(distanceKm) {
+  const speed = 40; // km/h vitesse moyenne bus
+  return Math.max(1, Math.round((distanceKm / speed) * 60));
+}
+
+// ===== CHART TEMP =====
+let chartTemp = new Chart(document.getElementById("chartTemp"), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'Température',
+      data: [],
+      borderWidth: 2
+    }]
+  }
+});
+
+// ===== CHART PASSAGERS =====
+let chartPass = new Chart(document.getElementById("chartPassengers"), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'Passagers',
+      data: [],
+      borderWidth: 2
+    }]
+  }
+});
+
+// ===== USER MODES =====
+const TRANSLATIONS = {
+  "fr-FR": {
+    title: "🚌 Smart Bus Dashboard",
+    passengers: "👥 Passagers", temp: "🌡️ Température",
+    hum: "💧 Humidité", air: "🌫️ Qualité Air",
+    history: "� Historique", filter: "Filtrer", export: "⬇ Export CSV",
+    aiTitle: "Prédiction — dans 5 minutes", waiting: "En attente de données...",
+    busGuide: null
+  },
+  "en-US": {
+    title: "🚌 Smart Bus Dashboard",
+    passengers: "👥 Passengers", temp: "🌡️ Temperature",
+    hum: "💧 Humidity", air: "🌫️ Air Quality",
+    history: "📋 History", filter: "Filter", export: "⬇ Export CSV",
+    aiTitle: "Traffic Prediction — in 5 minutes", waiting: "Waiting for data...",
+    busGuide: "en"
+  },
+  "ar-SA": {
+    title: "🚌 لوحة تحكم الحافلة الذكية",
+    passengers: "👥 الركاب", temp: "🌡️ الحرارة",
+    hum: "💧 الرطوبة", air: "🌫️ جودة الهواء",
+    history: "📋 السجل", filter: "تصفية", export: "⬇ تصدير CSV",
+    aiTitle: "توقع حركة المرور — خلال 5 دقائق", waiting: "في انتظار البيانات...",
+    busGuide: null
+  },
+  "es-ES": {
+    title: "🚌 Panel de Bus Inteligente",
+    passengers: "👥 Pasajeros", temp: "🌡️ Temperatura",
+    hum: "💧 Humedad", air: "🌫️ Calidad del Aire",
+    history: "📋 Historial", filter: "Filtrar", export: "⬇ Exportar CSV",
+    aiTitle: "Predicción — en 5 minutos", waiting: "Esperando datos...",
+    busGuide: null
+  }
+};
+
+let currentMode = localStorage.getItem("busMode") || "normal";
+let currentLang = localStorage.getItem("busLang") || "fr-FR";
+let voiceEnabled = localStorage.getItem("busVoice") === "true";
+let alertVoiceEnabled = localStorage.getItem("busAlertVoice") !== "false";
+let lastData = null;
+
+function speak(text, lang) {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const msg = new SpeechSynthesisUtterance(text);
+  msg.lang = lang || currentLang;
+  msg.rate = 0.92;
+  speechSynthesis.speak(msg);
+}
+
+function applyTranslation() {
+  const t = TRANSLATIONS[currentLang] || TRANSLATIONS["fr-FR"];
+  document.getElementById("mainTitle").innerText = t.title;
+  document.title = t.title.replace(/🚌 /, "");
+  document.querySelector(".prediction-title").innerText = t.aiTitle;
+  document.getElementById("aiSub").innerText = t.waiting;
+  document.querySelector(".section-title").innerText = t.history;
+  // tourist guide
+  const guide = document.getElementById("touristGuide");
+  guide.classList.toggle("show", currentLang === "en-US");
+  // RTL pour arabe
+  document.body.dir = currentLang === "ar-SA" ? "rtl" : "ltr";
+}
+
+function applyMode() {
+  const body = document.body;
+  body.classList.remove("mode-blind", "mode-disabled", "mode-tourist");
+  document.getElementById("accessBar").classList.remove("show");
+
+  if (currentMode === "blind") {
+    body.classList.add("mode-blind");
+    document.getElementById("toggleVoice").checked = true;
+    voiceEnabled = true;
+  }
+  if (currentMode === "disabled") {
+    body.classList.add("mode-disabled");
+    const bar = document.getElementById("accessBar");
+    bar.classList.add("show");
+    // couleur selon charge
+    if (lastData) updateAccessBar(lastData);
+  }
+  if (currentMode === "tourist") {
+    body.classList.add("mode-tourist");
+    currentLang = "en-US";
+    document.getElementById("langSelect").value = "en-US";
+    applyTranslation();
+  }
+}
+
+function applyContrast() {
+  const on = document.getElementById("toggleContrast").checked;
+  document.body.classList.toggle("mode-blind", on);
+  localStorage.setItem("busContrast", on);
+}
+
+function updateAccessBar(data) {
+  const bar = document.getElementById("accessBar");
+  const spots = data.passengers > 25 ? 0 : data.passengers > 18 ? 1 : 2;
+  document.getElementById("wheelchairSpots").innerText = spots;
+  bar.className = "access-bar show " + (spots === 0 ? "red" : "green");
+  bar.querySelector ? null : null;
+}
+
+function changeMode() {
+  currentMode = document.getElementById("userMode").value;
+  document.getElementById("userModePanel").value = currentMode;
+  localStorage.setItem("busMode", currentMode);
+  applyMode();
+  const msgs = {
+    normal:   { fr: "Mode normal activé.", en: "Normal mode activated." },
+    blind:    { fr: "Mode aveugle activé. Les données seront lues automatiquement.", en: "Blind mode activated." },
+    disabled: { fr: "Mode accessibilité activé. Informations fauteuil roulant affichées.", en: "Accessibility mode activated." },
+    tourist:  { fr: "Mode touriste activé.", en: "Tourist mode activated. Interface switched to English." }
+  };
+  const m = msgs[currentMode];
+  speak(currentLang === "en-US" ? m.en : m.fr);
+}
+
+function changeModeFromPanel() {
+  document.getElementById("userMode").value = document.getElementById("userModePanel").value;
+  changeMode();
+}
+
+function changeLang() {
+  currentLang = document.getElementById("langSelect").value;
+  localStorage.setItem("busLang", currentLang);
+  applyTranslation();
+  speak(currentLang === "ar-SA" ? "تم تغيير اللغة" :
+        currentLang === "es-ES" ? "Idioma cambiado" :
+        currentLang === "en-US" ? "Language changed to English" : "Langue changée");
+}
+
+function saveSettings() {
+  voiceEnabled = document.getElementById("toggleVoice").checked;
+  alertVoiceEnabled = document.getElementById("toggleAlertVoice").checked;
+  localStorage.setItem("busVoice", voiceEnabled);
+  localStorage.setItem("busAlertVoice", alertVoiceEnabled);
+}
+
+function openSettings() {
+  document.getElementById("settingsOverlay").classList.add("open");
+}
+function closeSettings() {
+  document.getElementById("settingsOverlay").classList.remove("open");
+}
+function closeSettingsOutside(e) {
+  if (e.target === document.getElementById("settingsOverlay")) closeSettings();
+}
+
+function announceData(data) {
+  if (!voiceEnabled) return;
+  const t = TRANSLATIONS[currentLang] || TRANSLATIONS["fr-FR"];
+  if (currentLang === "ar-SA") {
+    speak(`الحافلة ${data.bus_id}. ${data.passengers} راكب. درجة الحرارة ${Math.round(data.temperature)} درجة.`);
+  } else if (currentLang === "en-US") {
+    speak(`Bus ${data.bus_id}. ${data.passengers} passengers. Temperature ${Math.round(data.temperature)} degrees. Air quality ${Math.round(data.air)}.`);
+  } else if (currentLang === "es-ES") {
+    speak(`Autobús ${data.bus_id}. ${data.passengers} pasajeros. Temperatura ${Math.round(data.temperature)} grados.`);
+  } else {
+    speak(`Bus ${data.bus_id}. ${data.passengers} passagers. Température ${Math.round(data.temperature)} degrés. Qualité d'air ${Math.round(data.air)}.`);
+  }
+}
+
+// Raccourcis clavier accessibilité
+document.addEventListener("keydown", (e) => {
+  if (e.altKey && e.key === "v") { // Alt+V : lire les données
+    if (lastData) announceData(lastData);
+  }
+  if (e.altKey && e.key === "s") { // Alt+S : ouvrir settings
+    openSettings();
+  }
+  if (e.key === "Escape") closeSettings();
+});
+
+// Restaurer les préférences au chargement
+(function initSettings() {
+  document.getElementById("userMode").value = currentMode;
+  document.getElementById("userModePanel").value = currentMode;
+  document.getElementById("langSelect").value = currentLang;
+  document.getElementById("toggleVoice").checked = voiceEnabled;
+  document.getElementById("toggleAlertVoice").checked = alertVoiceEnabled;
+  if (localStorage.getItem("busContrast") === "true") {
+    document.getElementById("toggleContrast").checked = true;
+    document.body.classList.add("mode-blind");
+  }
+  applyMode();
+  applyTranslation();
+})();
+
+// ===== TRAFFIC PREDICTION =====
+// Données futures pour le chart
+const futurePoints = { labels: [], data: [] };
+
+let chartFuture = new Chart(document.getElementById("chartFuture"), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'Passagers prévus',
+      data: [],
+      borderColor: '#a78bfa',
+      backgroundColor: '#a78bfa15',
+      borderWidth: 2,
+      borderDash: [6, 3],
+      pointRadius: 4,
+      pointBackgroundColor: '#a78bfa',
+      tension: 0.4,
+      fill: true
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+      tooltip: {
+        callbacks: {
+          label: ctx => ` ${ctx.parsed.y} passagers prévus`
+        }
+      }
+    },
+    scales: {
+      x: { ticks: { color: '#475569', font: { size: 10 } }, grid: { color: '#1e3a5f' } },
+      y: { ticks: { color: '#a78bfa' }, grid: { color: '#1e3a5f' }, min: 0, max: 30 }
+    },
+    animation: { duration: 400 }
+  }
+});
+
+socket.on("trafficPrediction", (data) => {
+  console.log("📊 trafficPrediction reçu:", data);
+  if (!data || data.prediction === null || data.prediction === undefined) return;
+  if (activeBus && data.bus_id !== activeBus) return;
+
+  document.getElementById("aiPassengers").innerText = data.prediction;
+  document.getElementById("aiSub").innerText = `Bus ${data.bus_id} — prédiction dans ${data.in_minutes} min`;
+  document.getElementById("aiRecommendation").innerText = data.recommendation || "";
+  const badge = document.getElementById("aiBadge");
+  badge.innerText = data.level;
+  badge.className = "prediction-badge " + data.color;
+
+  // Mettre à jour le chart futur
+  const now = new Date();
+  const futureTime = new Date(now.getTime() + data.in_minutes * 60000);
+  const label = futureTime.toLocaleTimeString('fr', { hour: '2-digit', minute: '2-digit' });
+
+  chartFuture.data.labels.push(label);
+  chartFuture.data.datasets[0].data.push(data.prediction);
+
+  if (chartFuture.data.labels.length > 12) {
+    chartFuture.data.labels.shift();
+    chartFuture.data.datasets[0].data.shift();
+  }
+  chartFuture.update();
+});
+
+// ===== HISTORY CHART =====
+let chartHistory = new Chart(document.getElementById("chartHistory"), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label: 'Passagers', data: [], borderColor: '#38bdf8', backgroundColor: '#38bdf820', borderWidth: 2, tension: 0.4, fill: true, yAxisID: 'y' },
+      { label: 'Température', data: [], borderColor: '#f59e0b', backgroundColor: '#f59e0b20', borderWidth: 2, tension: 0.4, fill: false, yAxisID: 'y1' }
+    ]
+  },
+  options: {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } } },
+    scales: {
+      x:  { ticks: { color: '#475569', maxTicksLimit: 10 }, grid: { color: '#1e3a5f' } },
+      y:  { ticks: { color: '#38bdf8' }, grid: { color: '#1e3a5f' }, title: { display: true, text: 'Passagers', color: '#38bdf8' } },
+      y1: { position: 'right', ticks: { color: '#f59e0b' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Temp °C', color: '#f59e0b' } }
+    }
+  }
+});
+
+// ===== LOAD HISTORY =====
+let historyData = [];
+
+async function loadHistory() {
+  const bus_id    = document.getElementById("filterBus").value;
+  const from      = document.getElementById("filterFrom").value;
+  const to        = document.getElementById("filterTo").value;
+  const accessible = document.getElementById("filterAccessible").checked;
+
+  const params = new URLSearchParams({ limit: 100 });
+  if (bus_id) params.append("bus_id", bus_id);
+  if (from)   params.append("from", new Date(from).toISOString());
+  if (to)     params.append("to",   new Date(to).toISOString());
+
+  try {
+    const res = await fetch("/api/history?" + params);
+    if (!res.ok) throw new Error("Erreur serveur: " + res.status);
+    let data = await res.json();
+
+    // Filtre accessible côté client : bus non plein (< 20 passagers = places dispo)
+    if (accessible) data = data.filter(d => d.passengers < 20);
+
+    historyData = data;
+    renderTable(historyData);
+    renderHistoryChart(historyData);
+  } catch(err) {
+    console.error("loadHistory error:", err);
+    document.getElementById("historyBody").innerHTML =
+      '<tr><td colspan="7" class="empty-state">❌ Erreur de chargement — vérifiez la console</td></tr>';
+  }
+}
+
+function renderTable(data) {
+  const tbody = document.getElementById("historyBody");
+  if (!data.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">Aucune donnée trouvée</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(d => {
+    const accessible = d.passengers < 20;
+    return `
+    <tr>
+      <td><span class="badge" style="background:${(BUS_COLORS[d.bus_id]||'#38bdf8')}22;color:${BUS_COLORS[d.bus_id]||'#38bdf8'}">${d.bus_id}</span></td>
+      <td>${d.passengers}</td>
+      <td>${parseFloat(d.temperature).toFixed(1)}</td>
+      <td>${parseFloat(d.humidity).toFixed(1)}</td>
+      <td>${Math.round(d.air)}</td>
+      <td>${accessible ? '<span style="color:#4ade80">♿ Oui</span>' : '<span style="color:#ef4444">✗ Non</span>'}</td>
+      <td>${new Date(d.date).toLocaleString('fr')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderHistoryChart(data) {
+  const reversed = [...data].reverse();
+  chartHistory.data.labels = reversed.map(d => new Date(d.date).toLocaleTimeString('fr'));
+  chartHistory.data.datasets[0].data = reversed.map(d => Number(d.passengers));
+  chartHistory.data.datasets[1].data = reversed.map(d => parseFloat(d.temperature));
+  chartHistory.update();
+}
+
+// ===== EXPORT CSV =====
+function exportCSV() {
+  if (!historyData.length) return alert("Chargez d'abord l'historique.");
+  const header = "Bus,Passagers,Température,Humidité,Air,Date";
+  const rows = historyData.map(d =>
+    `${d.bus_id},${d.passengers},${parseFloat(d.temperature).toFixed(1)},${parseFloat(d.humidity).toFixed(1)},${Math.round(d.air)},${new Date(d.date).toLocaleString('fr')}`
+  );
+  const csv  = [header, ...rows].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = "historique_bus.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+function showAlert(msg) {
+  const box = document.getElementById("alert");
+  box.innerText = msg;
+  box.style.display = "block";
+  box.style.animation = "none";
+  void box.offsetHeight;
+  box.style.animation = "";
+  clearTimeout(box._timer);
+  box._timer = setTimeout(() => { box.style.display = "none"; }, 3000);
+  if (alertVoiceEnabled) speak(msg);
+}
+
+// ===== SOCKET DATA =====
+socket.on("busData", (data) => {
+
+  // STATS
+  document.getElementById("passengers").innerText = data.passengers;
+  document.getElementById("temp").innerText = data.temperature;
+  document.getElementById("hum").innerText = data.humidity;
+  document.getElementById("air").innerText = data.air;
+
+  lastData = data;
+  announceData(data);
+  if (currentMode === "disabled") updateAccessBar(data);
+
+  // MAP MARKER MULTI BUS
+  if (!markers[data.bus_id]) {
+    markers[data.bus_id] = L.marker([data.lat, data.lng], { icon: getBusIcon(data.bus_id, data.passengers) })
+      .addTo(map)
+      .bindPopup(`<b>Bus ${data.bus_id}</b><br>👥 ${data.passengers} passagers<br>🌡️ ${parseFloat(data.temperature).toFixed(1)}°C<br>${data.passengers < 20 ? '♿ Accessible' : '✗ Complet'}`);
+  } else {
+    markers[data.bus_id].setLatLng([data.lat, data.lng]);
+    markers[data.bus_id].setIcon(getBusIcon(data.bus_id, data.passengers));
+    markers[data.bus_id].getPopup().setContent(
+      `<b>Bus ${data.bus_id}</b><br>👥 ${data.passengers} passagers<br>🌡️ ${parseFloat(data.temperature).toFixed(1)}°C<br>${data.passengers < 20 ? '♿ Accessible' : '✗ Complet'}`
+    );
+  }
+
+  // TRAJET POLYLINE
+  if (!busPaths[data.bus_id]) busPaths[data.bus_id] = { coords: [], line: null };
+  busPaths[data.bus_id].coords.push([data.lat, data.lng]);
+  // garder max 30 points par bus
+  if (busPaths[data.bus_id].coords.length > 30) busPaths[data.bus_id].coords.shift();
+  if (busPaths[data.bus_id].line) map.removeLayer(busPaths[data.bus_id].line);
+  if (busPaths[data.bus_id].coords.length > 1) {
+    busPaths[data.bus_id].line = L.polyline(busPaths[data.bus_id].coords, {
+      color: BUS_COLORS[data.bus_id] || "#38bdf8",
+      weight: 3,
+      opacity: 0.7,
+      dashArray: "6, 4"
+    }).addTo(map);
+  }
+
+  // ETA vers la station la plus proche
+  const nearest = getNearestStation(data.lat, data.lng);
+  const eta     = getETA(nearest.dist);
+  const etaEl   = document.getElementById("etaInfo");
+  if (etaEl && (!activeBus || activeBus === data.bus_id)) {
+    etaEl.innerText = `🚏 ${nearest.name} — ETA : ${eta} min`;
+  }
+
+  // Centrer uniquement sur le bus sélectionné (ou tous si aucun)
+  if (!activeBus || activeBus === data.bus_id) {
+    map.panTo([data.lat, data.lng]);
+  }
+
+  // CHART UPDATE
+  chartTemp.data.labels.push("");
+  chartTemp.data.datasets[0].data.push(data.temperature);
+
+  chartPass.data.labels.push("");
+  chartPass.data.datasets[0].data.push(data.passengers);
+
+  if (chartTemp.data.labels.length > 15) {
+    chartTemp.data.labels.shift();
+    chartTemp.data.datasets[0].data.shift();
+
+    chartPass.data.labels.shift();
+    chartPass.data.datasets[0].data.shift();
+  }
+
+  chartTemp.update();
+  chartPass.update();
+
+  // ALERTS
+  if (data.passengers > 25) {
+    showAlert("⚠️ Bus plein !");
+  }
+
+  if (data.air > 600) {
+    showAlert("⚠️ Qualité d'air mauvaise !");
+  }
+
+  if (data.temperature > 40) {
+    showAlert("⚠️ Température élevée !");
+  }
+
+});
+</script>
+
+</body>
+</html>
